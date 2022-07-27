@@ -1,61 +1,65 @@
-##### make convolution network in graph
+# this file is using deepwalk in karateclub data
+# training about Graph Neural Network
+# using fastcampus lecture 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.utils.data as data
-from torch_geometric.data import Data
-import torch.optim as optim
+
+
 import networkx as nx
-from torch_geometric.utils.convert import to_networkx
 
-edge_list = torch.tensor([[0,1,1,1,2,2,3,3],[1,0,2,3,1,3,1,2]],dtype= torch.long)
-
-node_features = torch.tensor([[0,1],[2,3],[4,5],[6,7]],dtype=torch.long)
-
+from karateclub import DeepWalk
+import sklearn
 import matplotlib.pyplot as plt
 
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression # using in node classification
+from sklearn.metrics import roc_auc_score
+from torch import embedding
+
+# load data
+
+G = nx.karate_club_graph()
+print('number of nodes(club-members)',len(G.nodes))
+
+#nx.draw_networkx(G)
+
+
+#plot the graph with labels
+
+labels = []
+for i in G.nodes:
+    club_names = G.nodes[i]['club']
+    labels.append(1 if club_names == 'Officer' else 0)# clubs : officer is 1 else 0
+
+layout_pos = nx.spring_layout(G)
 plt.figure(figsize=(15,15))
-data = Data(x=node_features,edge_index=edge_list)
-G = to_networkx(data)
-nx.draw_networkx(G)
+nx.draw_networkx(G,pos= layout_pos,node_color = labels,cmap = 'coolwarm')
 plt.show()
 
-#our first convolution
+# DeepWalk
 
-node_features = torch.arange(8,dtype=torch.float32).view(1,4,2)
-adj_matrix = torch.tensor([[[1,1,0,0],[1,1,1,1],[0,1,1,1],[0,1,1,1]]],dtype=torch.float32)
-print('node features:',node_features)
-print(',adj mat',adj_matrix)
+DeepWalk_model = DeepWalk(walk_number=10,walk_length=80,dimensions=124) 
+# walk number is how many repeat deepwalk
+# walk length is hop number
+# dimension is embedding dimension / features dimension
 
-class SimpleConvolution(nn.Module):
+DeepWalk_model.fit(G) # karate club graph into Deepwalk
+embedding = DeepWalk_model.get_embedding()
+print('embedding array shape (nodes*features)',embedding.shape)
 
-    def __init__(self,c_in,c_out):
-        super().__init__()
-        self.projection = nn.Linear(c_in,c_out)
-        # y = xAT + b 선형회귀
 
-    def forward(self,node_features,adj_matrix):
-        # Input:
-        # node_features - Tensor with node features of shape[batch size, num node]
-        # adj_matrix - batch of adj [batch size, num_nodes,num_nodes]
+#PCA -> 124 dimension into 2 dimension
 
-        #num neighbor = num of incoming edges
+PCA_model = sklearn.decomposition.PCA(n_components = 2)
+lowdimension_embedding = PCA_model.fit_transform(embedding)
+print('Low dimensional embedding representation (nodes*2)',lowdimension_embedding)
+plt.scatter(lowdimension_embedding[:,0],lowdimension_embedding[:,1],c=labels,s=15,cmap='coolwarm')
+plt.show() # plt.show 2-dimension node embedding
 
-        num_neighbours = adj_matrix.sum(dim=-1,keepdims = True)
-        print('Num of neighbor per node',num_neighbours)
-        node_features = self.projection(node_features)
-        node_features = torch.bmm(adj_matrix,node_features)#matrix multiplication
-        node_features = node_features/num_neighbours
-        return node_features
+# node classification using embedded model
 
-layer = SimpleConvolution(c_in=2,c_out=2)
-layer.projection.weight.data = torch.Tensor([[1.,0.],[0.,1.]])# init weight
-layer.projection.bias.data = torch.Tensor([0.,0.])#bias term equal to zero
+x_train,x_test,y_train,y_test = train_test_split(embedding,labels,test_size=0.3)
+ML_model = LogisticRegression(random_state=0).fit(x_train,y_train)
+y_predict = ML_model.predict(x_test)#x test about y
+ML_acc = roc_auc_score(y_test,y_predict)
 
-with torch.no_grad():
-    out_features = layer(node_features,adj_matrix)
-
-print('adj mat',adj_matrix)
-print('input features',node_features)
-print('output features',out_features)
+print('acc',ML_acc)
